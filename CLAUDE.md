@@ -52,15 +52,18 @@ make verify           # go vet + all tests
 ```
 /opt/akmatori/
 ├── cmd/akmatori/           # Main API server entry point
+├── docs/                   # API documentation (OpenAPI spec, embed.go)
 ├── internal/
 │   ├── alerts/
 │   │   ├── adapters/       # Alert source adapters (Zabbix, Alertmanager, etc.)
 │   │   └── extraction/     # AI-powered alert extraction from free-form text
+│   ├── api/                # Request/response helpers, pagination, validation
 │   ├── database/           # GORM models and database logic
 │   ├── handlers/           # HTTP/WebSocket handlers
-│   ├── middleware/         # Auth, CORS middleware
+│   ├── middleware/         # Auth (JWT), CORS middleware
 │   ├── output/             # Agent output parsing (structured blocks)
 │   ├── services/           # Business logic layer
+│   ├── setup/              # Zero-config first-run setup (credential resolution)
 │   ├── slack/              # Slack integration (Socket Mode, hot-reload)
 │   └── utils/              # Utility functions
 ├── codex-worker/           # Codex CLI execution worker (separate Go module)
@@ -256,29 +259,175 @@ fmt.Println(parsed.CleanOutput)
 
 Converts parsed output to Slack Block Kit format for rich messages.
 
+## Setup Package (`internal/setup/`)
+
+Zero-config first-run setup experience. Handles credential resolution and initial configuration.
+
+### Credential Resolution Priority
+
+Both JWT secret and admin password follow the same resolution pattern:
+
+1. **Environment variable** (highest priority) - Use if set
+2. **Database** - Use stored value if exists
+3. **Generate/Setup** - Auto-generate (JWT) or trigger setup mode (password)
+
+### Functions
+
+| Function | Purpose |
+|----------|---------|
+| `ResolveJWTSecret(envSecret)` | Resolves JWT secret using env > DB > generate pattern |
+| `ResolveAdminPassword(envPassword)` | Resolves admin password; returns `(hash, setupRequired, error)` |
+| `CompleteSetup(password)` | Hashes password, stores in DB, marks setup complete |
+| `IsSetupCompleted()` | Checks if initial setup has been completed |
+
+### System Settings Keys
+
+| Key | Purpose |
+|-----|---------|
+| `jwt_secret` | JWT signing secret |
+| `admin_password_hash` | Bcrypt hash of admin password |
+| `setup_completed` | Flag indicating setup is done |
+
+### First-Run Flow
+
+1. Server starts with no `ADMIN_PASSWORD` env var
+2. `ResolveAdminPassword()` returns `setupRequired=true`
+3. JWT middleware enters setup mode (only `/auth/setup` accessible)
+4. User visits `/api/docs` → redirected to setup page
+5. User sets password via `/auth/setup` endpoint
+6. `CompleteSetup()` stores hash and sets `setup_completed=true`
+7. Server exits setup mode, normal auth flow begins
+
+### Usage in main.go
+
+```go
+// Resolve credentials with priority: env > DB > generate/setup
+jwtSecret := setup.ResolveJWTSecret(os.Getenv("JWT_SECRET"))
+adminHash, setupRequired, err := setup.ResolveAdminPassword(os.Getenv("ADMIN_PASSWORD"))
+
+// Configure middleware with setup mode if needed
+authMiddleware := middleware.NewJWTAuthMiddleware(&middleware.JWTAuthConfig{
+    SetupMode:         setupRequired,
+    AdminPasswordHash: adminHash,
+    JWTSecret:         jwtSecret,
+    // ...
+})
+```
+
+## API Documentation
+
+Interactive API documentation is available via Swagger UI.
+
+### Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/api/docs` | Swagger UI (interactive documentation) |
+| `/api/openapi.yaml` | OpenAPI 3.1 specification file |
+
+### OpenAPI Spec Location
+
+The OpenAPI specification is embedded at build time from `docs/openapi.yaml`:
+
+```go
+// docs/embed.go
+//go:embed openapi.yaml
+var OpenAPISpec []byte
+```
+
+### Updating the Spec
+
+When adding or modifying API endpoints:
+
+1. Update `docs/openapi.yaml` with the new endpoint schema
+2. Include request/response schemas in the components section
+3. Document all possible error responses
+4. Add examples where helpful
+
+## API Package (`internal/api/`)
+
+Standardized request/response helpers for consistent API behavior.
+
+### Response Helpers
+
+```go
+import "github.com/akmatori/akmatori/internal/api"
+
+// Success response with JSON body
+api.RespondJSON(w, http.StatusOK, data)
+
+// Error responses
+api.RespondError(w, http.StatusBadRequest, "Invalid request")
+api.RespondErrorWithCode(w, http.StatusConflict, "duplicate_key", "Resource already exists")
+
+// Validation errors (422 with field details)
+api.RespondValidationError(w, map[string]string{
+    "name": "Name is required",
+    "email": "Invalid email format",
+})
+
+// No content (204)
+api.RespondNoContent(w)
+```
+
+### Request Helpers
+
+```go
+// Decode JSON body with error handling
+var req CreateSkillRequest
+if err := api.DecodeJSON(r, &req); err != nil {
+    api.RespondError(w, http.StatusBadRequest, "Invalid JSON")
+    return
+}
+
+// Extract path parameters
+id := api.PathParam(r, "id")      // From mux vars
+uuid := api.PathParam(r, "uuid")
+```
+
+### Pagination
+
+```go
+// Parse pagination from query string (?page=1&per_page=20)
+page, perPage := api.ParsePagination(r, 25) // default perPage=25
+
+// Calculate offset for SQL
+offset := (page - 1) * perPage
+
+// Build pagination response metadata
+meta := api.PaginationMeta{
+    Page:    page,
+    PerPage: perPage,
+    Total:   totalCount,
+}
+```
+
 ## Current Test Coverage
 
-**Last updated: Feb 22, 2026**
+**Last updated: Mar 5, 2026**
 
 | Package | Coverage | Status |
 |---------|----------|--------|
 | `internal/alerts/adapters` | 98.4% | ✅ Excellent |
-| `internal/utils` | 98.5% | ✅ Excellent |
-| `internal/testhelpers` | 59.2% | ⚠️ Needs work |
-| `internal/alerts/extraction` | 40.2% | ⚠️ Needs work |
-| `internal/middleware` | 37.9% | ⚠️ Needs work |
+| `internal/utils` | 93.4% | ✅ Excellent |
+| `internal/api` | 92.3% | ✅ Excellent |
+| `internal/setup` | 84.8% | ✅ Good |
+| `internal/middleware` | 78.9% | ✅ Good |
+| `internal/testhelpers` | 73.7% | ✅ Good |
+| `internal/jobs` | 58.1% | ✅ Good |
+| `internal/alerts/extraction` | 38.9% | ⚠️ Needs work |
 | `internal/slack` | 34.6% | ⚠️ Needs work |
-| `internal/database` | 32.2% | ⚠️ Needs work |
-| `internal/jobs` | 20.2% | ⚠️ Needs work |
-| `internal/services` | 13.0% | ⚠️ Needs work |
-| `internal/handlers` | 6.9% | ⚠️ Needs work |
+| `internal/services` | 28.3% | ⚠️ Needs work |
+| `internal/database` | 21.4% | ⚠️ Needs work |
+| `internal/handlers` | 9.5% | ⚠️ Needs work |
 | `internal/output` | 0.0% | ❌ No tests |
-| **Total** | **19.8%** | ⚠️ Overall |
+
+**Total coverage: 30.3%**
 
 **Priority areas for test improvement:**
-1. `internal/output` - Add parser tests
-2. `internal/handlers` - Add HTTP handler tests
-3. `internal/services` - Add business logic tests
+1. `internal/output` - Add parser tests for structured blocks
+2. `internal/handlers` - Add HTTP handler tests (DB integration tests needed for higher coverage)
+3. `internal/database` - Add model tests
 
 ## Testing Infrastructure
 
