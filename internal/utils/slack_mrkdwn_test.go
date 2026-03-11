@@ -75,7 +75,7 @@ func TestStripSlackMrkdwn(t *testing.T) {
 		},
 		{
 			name:  "real PagerDuty example",
-			input: `:red_circle: *<https://gcorelabs.pagerduty.com/incidents/Q31UTHHOLNK1OU?utm_campaign=channel&amp;utm_source=ij0KKKK|[#12345] High CPU on web-01>* triggered`,
+			input: `:red_circle: *<https://example.pagerduty.com/incidents/Q31UTHHOLNK1OU?utm_campaign=channel&amp;utm_source=ij0KKKK|[#12345] High CPU on web-01>* triggered`,
 			want:  "[#12345] High CPU on web-01 triggered",
 		},
 		{
@@ -101,7 +101,7 @@ func TestStripSlackMrkdwn(t *testing.T) {
 }
 
 func BenchmarkStripSlackMrkdwn(b *testing.B) {
-	input := `:red_circle: *<https://gcorelabs.pagerduty.com/incidents/Q31UTHHOLNK1OU?utm_campaign=channel&amp;utm_source=ij0KKKK|[#12345] High CPU on web-01>* triggered in <#C012ABC34|ops-alerts>`
+	input := `:red_circle: *<https://example.pagerduty.com/incidents/Q31UTHHOLNK1OU?utm_campaign=channel&amp;utm_source=ij0KKKK|[#12345] High CPU on web-01>* triggered in <#C012ABC34|ops-alerts>`
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		StripSlackMrkdwn(input)
