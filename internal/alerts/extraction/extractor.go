@@ -198,7 +198,7 @@ func (e *AlertExtractor) toNormalizedAlert(extracted ExtractedAlert, originalMes
 
 	// Parse status
 	status := database.AlertStatusFiring
-	if strings.ToLower(extracted.Status) == "resolved" {
+	if strings.EqualFold(extracted.Status, "resolved") {
 		status = database.AlertStatusResolved
 	}
 

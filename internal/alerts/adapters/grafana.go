@@ -108,7 +108,7 @@ func (a *GrafanaAdapter) ParsePayload(body []byte, instance *database.AlertSourc
 func (a *GrafanaAdapter) parseUnifiedAlert(alert GrafanaAlert, mappings database.JSONB) alerts.NormalizedAlert {
 	// Map status
 	status := database.AlertStatusFiring
-	if strings.ToLower(alert.Status) == "resolved" {
+	if strings.EqualFold(alert.Status, "resolved") {
 		status = database.AlertStatusResolved
 	}
 

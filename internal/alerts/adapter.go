@@ -130,7 +130,7 @@ func NormalizeSeverity(severity string, severityMapping map[string][]string) dat
 	// Check severity mapping (range over nil map is safe - iterates zero times)
 	for normalized, aliases := range severityMapping {
 		for _, alias := range aliases {
-			if strings.ToLower(alias) == severity {
+			if strings.EqualFold(alias, severity) {
 				switch normalized {
 				case "critical":
 					return database.AlertSeverityCritical
