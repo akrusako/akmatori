@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -117,21 +119,22 @@ func extractPathParam(path, prefix string) string {
 func TestAlertHandler_ConcurrentAdapterRegistration(t *testing.T) {
 	h := NewAlertHandler(nil, nil, nil, nil, nil, nil, nil, nil)
 
-	// Simulate concurrent adapter registrations
-	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	const registrations = 32
+	var wg sync.WaitGroup
+	wg.Add(registrations)
+
+	for i := 0; i < registrations; i++ {
 		go func(n int) {
-			adapter := &mockAlertAdapter{sourceType: "type-" + string(rune('0'+n))}
-			h.RegisterAdapter(adapter)
-			done <- true
+			defer wg.Done()
+			h.RegisterAdapter(&mockAlertAdapter{sourceType: fmt.Sprintf("type-%d", n)})
 		}(i)
 	}
 
-	// Wait for all registrations
-	for i := 0; i < 10; i++ {
-		<-done
+	wg.Wait()
+
+	if len(h.adapters) != registrations {
+		t.Fatalf("expected %d registered adapters, got %d", registrations, len(h.adapters))
 	}
-	// No panic = success
 }
 
 // --- Edge Cases ---
@@ -230,14 +233,14 @@ func TestAlertHandler_InitializationState(t *testing.T) {
 func TestAlertHandler_NilDependencies(t *testing.T) {
 	// All dependencies can be nil for creation
 	h := NewAlertHandler(nil, nil, nil, nil, nil, nil, nil, nil)
-	
+
 	if h == nil {
 		t.Fatal("NewAlertHandler should not return nil")
 	}
 
 	// Should be able to register adapters even with nil dependencies
 	h.RegisterAdapter(&mockAlertAdapter{sourceType: "test"})
-	
+
 	if len(h.adapters) != 1 {
 		t.Error("should be able to register adapter with nil dependencies")
 	}

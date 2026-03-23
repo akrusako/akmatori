@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/akmatori/akmatori/internal/alerts"
@@ -15,8 +16,8 @@ import (
 	"github.com/akmatori/akmatori/internal/database"
 	"github.com/akmatori/akmatori/internal/executor"
 	"github.com/akmatori/akmatori/internal/services"
-	"github.com/akmatori/akmatori/internal/utils"
 	slackutil "github.com/akmatori/akmatori/internal/slack"
+	"github.com/akmatori/akmatori/internal/utils"
 	"github.com/slack-go/slack"
 )
 
@@ -36,7 +37,8 @@ type AlertHandler struct {
 	aggregationService *services.AggregationService
 
 	// Registered adapters by source type
-	adapters map[string]alerts.AlertAdapter
+	adapters   map[string]alerts.AlertAdapter
+	adaptersMu sync.RWMutex
 }
 
 // NewAlertHandler creates a new alert handler
@@ -67,8 +69,13 @@ func NewAlertHandler(
 
 // RegisterAdapter registers an alert adapter for a source type
 func (h *AlertHandler) RegisterAdapter(adapter alerts.AlertAdapter) {
-	h.adapters[adapter.GetSourceType()] = adapter
-	log.Printf("Registered alert adapter: %s", adapter.GetSourceType())
+	sourceType := adapter.GetSourceType()
+
+	h.adaptersMu.Lock()
+	h.adapters[sourceType] = adapter
+	h.adaptersMu.Unlock()
+
+	log.Printf("Registered alert adapter: %s", sourceType)
 }
 
 // HandleWebhook processes incoming webhook requests
@@ -103,7 +110,9 @@ func (h *AlertHandler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get adapter for source type
+	h.adaptersMu.RLock()
 	adapter, ok := h.adapters[instance.AlertSourceType.Name]
+	h.adaptersMu.RUnlock()
 	if !ok {
 		log.Printf("No adapter for source type: %s", instance.AlertSourceType.Name)
 		http.Error(w, "Unsupported source type", http.StatusBadRequest)
@@ -930,13 +939,13 @@ func (h *AlertHandler) runSlackChannelInvestigation(
 		var openaiSettings *OpenAISettings
 		if dbSettings, err := database.GetOpenAISettings(); err == nil && dbSettings != nil {
 			openaiSettings = &OpenAISettings{
-				APIKey:          dbSettings.APIKey,
-				Model:           dbSettings.Model,
-				ReasoningEffort: dbSettings.ModelReasoningEffort,
-				BaseURL:         dbSettings.BaseURL,
-				ProxyURL:        dbSettings.ProxyURL,
-				NoProxy:         dbSettings.NoProxy,
-				AuthMethod:      string(dbSettings.AuthMethod),
+				APIKey:              dbSettings.APIKey,
+				Model:               dbSettings.Model,
+				ReasoningEffort:     dbSettings.ModelReasoningEffort,
+				BaseURL:             dbSettings.BaseURL,
+				ProxyURL:            dbSettings.ProxyURL,
+				NoProxy:             dbSettings.NoProxy,
+				AuthMethod:          string(dbSettings.AuthMethod),
 				ChatGPTAccessToken:  dbSettings.ChatGPTAccessToken,
 				ChatGPTRefreshToken: dbSettings.ChatGPTRefreshToken,
 			}
