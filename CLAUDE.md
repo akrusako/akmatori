@@ -2,1087 +2,185 @@
 
 ## Project Overview
 
-Akmatori is an AI-powered AIOps platform that receives alerts from monitoring systems (Zabbix, Alertmanager, PagerDuty, Grafana, Datadog), analyzes them using OpenAI's Codex CLI, and executes automated remediation.
+Akmatori is an AI-powered AIOps agent for ingesting alerts, running investigations, and helping operators respond through the API, web UI, and Slack.
 
 ## Architecture
 
-- **4-container Docker architecture**: API, Codex Worker, MCP Gateway, PostgreSQL
-- **Backend**: Go 1.24+ (API server, Codex worker, MCP gateway)
-- **Frontend**: React 19 + TypeScript + Vite + Tailwind
-- **Database**: PostgreSQL 16 with GORM
+- Main stack: API server, PostgreSQL, frontend, MCP gateway, and worker/runtime services via Docker Compose
+- Backend: Go
+- Frontend: React + TypeScript + Vite
+- Database: PostgreSQL with GORM
+- Main areas:
+  - `cmd/akmatori/`: API entrypoint
+  - `internal/handlers/`: HTTP and websocket handlers
+  - `internal/services/`: business logic
+  - `internal/database/`: models and persistence
+  - `internal/alerts/`: adapters and extraction
+  - `internal/slack/`: Slack manager and channel handling
+  - `internal/output/`: structured output parsing and Slack formatting
+  - `internal/setup/`: first-run setup and credential resolution
+  - `mcp-gateway/`: separate Go module for MCP tooling
+  - `web/`: frontend
+  - `tests/fixtures/`: shared test data
 
-## CRITICAL: Always Verify Changes with Tests
+## Non-Negotiable Workflow
 
-**After ANY code change, you MUST run the appropriate test command to verify your work.**
+After any code change, run tests for the area you touched. Before committing, run broader verification.
 
-### Test Commands by Area
-
-| After changing... | Run this command |
-|-------------------|------------------|
-| Alert adapters (`internal/alerts/adapters/`) | `make test-adapters` |
-| MCP Gateway tools (`mcp-gateway/internal/tools/`) | `make test-mcp` |
-| Database models (`internal/database/`) | `go test ./internal/database/...` |
-| Middleware (`internal/middleware/`) | `go test ./internal/middleware/...` |
-| Utilities (`internal/utils/`) | `go test ./internal/utils/...` |
-| Any Go code | `make test` |
-| Before committing | `make verify` |
-
-### Quick Reference
+### Useful commands
 
 ```bash
-# Fast feedback - test only what you changed
-make test-adapters    # Alert adapter tests (~0.01s)
-make test-mcp         # MCP gateway tests (~0.01s)
+make test                # main Go tests
+make test-all            # main tests + mcp-gateway
+make test-adapters       # adapter tests only
+make test-mcp            # mcp-gateway tool tests only
+make test-coverage       # coverage.out + coverage.html
+make verify              # go vet + tests in both modules
+```
 
-# Full test suite
-make test-all         # All tests including MCP gateway
+### Package-level checks
 
-# Pre-commit verification
-make verify           # go vet + all tests
+```bash
+go test ./internal/handlers/...
+go test ./internal/services/...
+go test ./internal/database/...
+go test ./internal/middleware/...
+go test ./internal/utils/...
+cd mcp-gateway && go test ./...
 ```
 
 ## Code Style
 
-- Use standard Go testing patterns (see existing `*_test.go` files)
-- Use `httptest` for HTTP handler testing
-- Follow existing naming conventions: `TestComponentName_MethodName_Scenario`
-
-## Key Directories
-
-```
-/opt/akmatori/
-├── cmd/akmatori/           # Main API server entry point
-├── docs/                   # API documentation (OpenAPI spec, embed.go)
-├── internal/
-│   ├── alerts/
-│   │   ├── adapters/       # Alert source adapters (Zabbix, Alertmanager, etc.)
-│   │   └── extraction/     # AI-powered alert extraction from free-form text
-│   ├── api/                # Request/response helpers, pagination, validation
-│   ├── database/           # GORM models and database logic
-│   ├── handlers/           # HTTP/WebSocket handlers
-│   ├── middleware/         # Auth (JWT), CORS middleware
-│   ├── output/             # Agent output parsing (structured blocks)
-│   ├── services/           # Business logic layer
-│   ├── setup/              # Zero-config first-run setup (credential resolution)
-│   ├── slack/              # Slack integration (Socket Mode, hot-reload)
-│   └── utils/              # Utility functions
-├── codex-worker/           # Codex CLI execution worker (separate Go module)
-│   └── internal/
-│       ├── codex/          # Codex CLI runner
-│       ├── orchestrator/   # WebSocket message handling and execution
-│       ├── session/        # Session state persistence
-│       └── ws/             # WebSocket client for API communication
-├── mcp-gateway/            # MCP protocol gateway (separate Go module)
-│   └── internal/
-│       ├── cache/          # Generic TTL cache implementation
-│       ├── database/       # Credential and config retrieval
-│       ├── mcp/            # MCP protocol handling
-│       ├── ratelimit/      # Token bucket rate limiter
-│       └── tools/          # SSH and Zabbix tool implementations
-├── web/                    # React frontend
-└── tests/fixtures/         # Test payloads and mock data
-```
-
-## Codex Worker Architecture
-
-The `codex-worker/` is a **separate Go module** that manages Codex CLI execution:
-
-### Components
-
-| Component | File | Purpose |
-|-----------|------|---------|
-| Orchestrator | `internal/orchestrator/orchestrator.go` | Main coordinator - handles WebSocket messages, dispatches work |
-| Runner | `internal/codex/runner.go` | Executes Codex CLI, manages process lifecycle |
-| Session Store | `internal/session/store.go` | Persists session IDs for conversation continuity |
-| WS Client | `internal/ws/client.go` | WebSocket communication with API server |
-
-### Message Flow
-
-1. API server sends `new_incident` or `continue_incident` via WebSocket
-2. Orchestrator receives message, extracts OpenAI settings and proxy config
-3. Runner executes Codex CLI with streaming output
-4. Output is streamed back to API via WebSocket
-5. On completion, metrics (tokens, execution time) are reported
-
-### WebSocket Message Types
-
-| Type | Direction | Purpose |
-|------|-----------|---------|
-| `new_incident` | API → Worker | Start new investigation |
-| `continue_incident` | API → Worker | Continue existing session |
-| `cancel_incident` | API → Worker | Cancel running investigation |
-| `device_auth_start` | API → Worker | Start OAuth device flow |
-| `output` | Worker → API | Streaming output chunk |
-| `completed` | Worker → API | Investigation finished with metrics |
-| `error` | Worker → API | Execution failed |
-
-### OpenAI Authentication
-
-The worker supports multiple auth methods:
-- **API Key**: Direct `OPENAI_API_KEY` authentication
-- **ChatGPT OAuth**: Device code flow with token refresh (for ChatGPT Plus accounts)
-
-OAuth tokens are refreshed automatically and returned to API for storage.
-
-## Slack Integration
-
-The `internal/slack/` package provides real-time Slack monitoring:
-
-### Manager (`manager.go`)
-
-Hot-reloadable Slack connection manager:
-
-```go
-// Create and start manager
-manager := slack.NewManager()
-manager.SetEventHandler(myEventHandler)
-manager.Start(ctx)
-
-// Hot-reload on settings change (non-blocking)
-manager.TriggerReload()
-
-// Watch for reloads in background
-go manager.WatchForReloads(ctx)
-```
-
-**Key features:**
-- Socket Mode for real-time events (no public webhook needed)
-- Hot-reload without restart when settings change in database
-- Proxy support for both HTTP API and WebSocket connections
-- Thread-safe client access via `GetClient()` and `GetSocketClient()`
-
-### Channel Management (`channels.go`)
-
-Maps Slack channels to alert sources:
-- Channels can be designated as "alert channels"
-- Bot messages in alert channels trigger investigations
-- @mentions in threads allow follow-up questions
-- Thread parent messages are fetched for context
-
-### Event Types Handled
-
-| Event | Behavior |
-|-------|----------|
-| Bot message in alert channel | Create incident, start investigation |
-| @mention in alert thread | Continue investigation with question |
-| @mention in general channel | Direct response (not investigation) |
+- Match existing Go conventions and naming.
+- Prefer small, focused changes.
+- Reuse helpers in `internal/testhelpers/` instead of inventing ad hoc fixtures.
+- For HTTP handlers, use `httptest` and assert status plus response body.
+- Prefer table-driven tests for parsing, validation, and mapping logic.
+- Check returned errors unless there is a documented reason not to.
+- Keep docs concise and operational; avoid long tutorial sections in this file.
 
-## Alert Extraction (`internal/alerts/extraction/`)
+## Testing Patterns
 
-AI-powered extraction of structured alert data from free-form text:
+### Handler tests
 
-### How It Works
+- Build requests with `httptest.NewRequest`
+- Record with `httptest.NewRecorder`
+- Assert status code, JSON body, and error shape
+- Cover invalid JSON, validation failures, and partial-update behavior
 
-1. Slack message (or any text) comes in
-2. `AlertExtractor` sends to GPT-4o-mini with extraction prompt
-3. Returns structured `NormalizedAlert` with:
-   - Alert name, severity, status
-   - Summary, description
-   - Target host/service
-   - Source system identification
+### Service tests
 
-### Fallback Mode
+- Prefer deterministic unit tests over broad integration setup when possible
+- Cover success path, edge cases, and dependency failures
+- Use table-driven cases for normalization and transformation logic
 
-If OpenAI is not configured or API fails:
-- First line becomes alert name (stripped of emoji prefixes)
-- Full text becomes description
-- Defaults to `warning` severity, `firing` status
+### Adapter and parser tests
 
-### Usage
+- Load realistic payloads from `tests/fixtures/` when available
+- Add focused fixture files rather than giant inline JSON blobs
+- Verify both parsed fields and fallback behavior
 
-```go
-extractor := extraction.NewAlertExtractor()
-alert, err := extractor.Extract(ctx, messageText)
-// Or with custom prompt:
-alert, err := extractor.ExtractWithPrompt(ctx, messageText, customPrompt)
-```
+### Database tests
 
-### Cost Optimization
+- Keep tests isolated and explicit about setup
+- Assert persisted fields, merge/update behavior, and query filters
 
-- Uses `gpt-4o-mini` (fast, cheap)
-- Low temperature (0.1) for consistent results
-- Message truncated to 3000 chars
-- Graceful fallback on any error
+## High-Value Areas
 
-## Output Parser (`internal/output/`)
+If you need a place to improve quality, prioritize these directories first:
 
-Parses structured blocks from agent output for machine-readable results:
+1. `internal/handlers/`
+2. `internal/services/`
+3. `internal/alerts/`
+4. `internal/slack/`
+5. `internal/output/`
+6. `internal/database/`
 
-### Structured Block Types
+## Important Project Patterns
 
-```
-[FINAL_RESULT]
-status: resolved|unresolved|escalate
-summary: One-line summary
-actions_taken:
-- Action 1
-- Action 2
-recommendations:
-- Recommendation 1
-[/FINAL_RESULT]
+### Setup flow
 
-[ESCALATE]
-reason: Why escalation is needed
-urgency: low|medium|high|critical
-context: Additional context
-suggested_actions:
-- Suggested action 1
-[/ESCALATE]
+`internal/setup/` resolves credentials with this priority:
 
-[PROGRESS]
-step: Current investigation step
-completed: What's been done
-findings_so_far: Current findings
-[/PROGRESS]
-```
+1. environment variable
+2. database value
+3. generated value or setup-required mode
 
-### Usage
+This affects JWT secret and admin password initialization.
 
-```go
-parsed := output.Parse(agentOutput)
+### API responses
 
-if parsed.FinalResult != nil {
-    // Investigation complete
-    fmt.Printf("Status: %s\n", parsed.FinalResult.Status)
-}
+Use helpers from `internal/api/` for consistent JSON responses and validation errors.
 
-if parsed.Escalation != nil {
-    // Needs human attention
-    notifyOnCall(parsed.Escalation.Urgency, parsed.Escalation.Reason)
-}
+### Slack behavior
 
-// Clean output has structured blocks stripped
-fmt.Println(parsed.CleanOutput)
-```
+Slack integration supports channel-based alert ingestion, thread follow-ups, and hot-reloadable settings. When changing Slack code, preserve:
 
-### Slack Formatter (`slack_formatter.go`)
+- thread context behavior
+- settings reload behavior
+- secret masking in API responses
+- partial update semantics for saved credentials
 
-Converts parsed output to Slack Block Kit format for rich messages.
+### Output parsing
 
-## Setup Package (`internal/setup/`)
+`internal/output/` extracts structured blocks from agent output. Changes here should preserve clean output and structured result parsing.
 
-Zero-config first-run setup experience. Handles credential resolution and initial configuration.
+## Current Notes Worth Preserving
 
-### Credential Resolution Priority
+- Swagger/OpenAPI is served from `/api/docs` and `/api/openapi.yaml`
+- OpenAPI source lives in `docs/openapi.yaml`
+- `make verify` runs vet and tests for both the main module and `mcp-gateway`
+- `tests/fixtures/` is the preferred home for reusable payload samples
+- Recent test coverage work includes Slack settings API flows, especially masked secrets, partial updates, and invalid JSON handling
 
-Both JWT secret and admin password follow the same resolution pattern:
+## Coverage and Quality Work
 
-1. **Environment variable** (highest priority) - Use if set
-2. **Database** - Use stored value if exists
-3. **Generate/Setup** - Auto-generate (JWT) or trigger setup mode (password)
+When improving tests:
 
-### Functions
+- target uncovered branches, not just lines
+- add assertions with clear failure messages
+- prefer one focused behavior per test
+- avoid brittle timing assumptions
+- keep mocks minimal and honest
 
-| Function | Purpose |
-|----------|---------|
-| `ResolveJWTSecret(envSecret)` | Resolves JWT secret using env > DB > generate pattern |
-| `ResolveAdminPassword(envPassword)` | Resolves admin password; returns `(hash, setupRequired, error)` |
-| `CompleteSetup(password)` | Hashes password, stores in DB, marks setup complete |
-| `IsSetupCompleted()` | Checks if initial setup has been completed |
-
-### System Settings Keys
-
-| Key | Purpose |
-|-----|---------|
-| `jwt_secret` | JWT signing secret |
-| `admin_password_hash` | Bcrypt hash of admin password |
-| `setup_completed` | Flag indicating setup is done |
-
-### First-Run Flow
-
-1. Server starts with no `ADMIN_PASSWORD` env var
-2. `ResolveAdminPassword()` returns `setupRequired=true`
-3. JWT middleware enters setup mode (only `/auth/setup` accessible)
-4. User visits `/api/docs` → redirected to setup page
-5. User sets password via `/auth/setup` endpoint
-6. `CompleteSetup()` stores hash and sets `setup_completed=true`
-7. Server exits setup mode, normal auth flow begins
-
-### Usage in main.go
-
-```go
-// Resolve credentials with priority: env > DB > generate/setup
-jwtSecret := setup.ResolveJWTSecret(os.Getenv("JWT_SECRET"))
-adminHash, setupRequired, err := setup.ResolveAdminPassword(os.Getenv("ADMIN_PASSWORD"))
-
-// Configure middleware with setup mode if needed
-authMiddleware := middleware.NewJWTAuthMiddleware(&middleware.JWTAuthConfig{
-    SetupMode:         setupRequired,
-    AdminPasswordHash: adminHash,
-    JWTSecret:         jwtSecret,
-    // ...
-})
-```
-
-## API Documentation
-
-Interactive API documentation is available via Swagger UI.
-
-### Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `/api/docs` | Swagger UI (interactive documentation) |
-| `/api/openapi.yaml` | OpenAPI 3.1 specification file |
-
-### OpenAPI Spec Location
-
-The OpenAPI specification is embedded at build time from `docs/openapi.yaml`:
-
-```go
-// docs/embed.go
-//go:embed openapi.yaml
-var OpenAPISpec []byte
-```
-
-### Updating the Spec
-
-When adding or modifying API endpoints:
-
-1. Update `docs/openapi.yaml` with the new endpoint schema
-2. Include request/response schemas in the components section
-3. Document all possible error responses
-4. Add examples where helpful
-
-## API Package (`internal/api/`)
-
-Standardized request/response helpers for consistent API behavior.
-
-### Response Helpers
-
-```go
-import "github.com/akmatori/akmatori/internal/api"
-
-// Success response with JSON body
-api.RespondJSON(w, http.StatusOK, data)
-
-// Error responses
-api.RespondError(w, http.StatusBadRequest, "Invalid request")
-api.RespondErrorWithCode(w, http.StatusConflict, "duplicate_key", "Resource already exists")
-
-// Validation errors (422 with field details)
-api.RespondValidationError(w, map[string]string{
-    "name": "Name is required",
-    "email": "Invalid email format",
-})
-
-// No content (204)
-api.RespondNoContent(w)
-```
-
-### Request Helpers
-
-```go
-// Decode JSON body with error handling
-var req CreateSkillRequest
-if err := api.DecodeJSON(r, &req); err != nil {
-    api.RespondError(w, http.StatusBadRequest, "Invalid JSON")
-    return
-}
-
-// Extract path parameters
-id := api.PathParam(r, "id")      // From mux vars
-uuid := api.PathParam(r, "uuid")
-```
-
-### Pagination
-
-```go
-// Parse pagination from query string (?page=1&per_page=20)
-page, perPage := api.ParsePagination(r, 25) // default perPage=25
-
-// Calculate offset for SQL
-offset := (page - 1) * perPage
-
-// Build pagination response metadata
-meta := api.PaginationMeta{
-    Page:    page,
-    PerPage: perPage,
-    Total:   totalCount,
-}
-```
-
-## Current Test Coverage
-
-**Last updated: Mar 5, 2026**
-
-| Package | Coverage | Status |
-|---------|----------|--------|
-| `internal/alerts/adapters` | 98.4% | ✅ Excellent |
-| `internal/utils` | 93.4% | ✅ Excellent |
-| `internal/api` | 92.3% | ✅ Excellent |
-| `internal/setup` | 84.8% | ✅ Good |
-| `internal/middleware` | 78.9% | ✅ Good |
-| `internal/testhelpers` | 73.7% | ✅ Good |
-| `internal/jobs` | 58.1% | ✅ Good |
-| `internal/alerts/extraction` | 38.9% | ⚠️ Needs work |
-| `internal/slack` | 34.6% | ⚠️ Needs work |
-| `internal/services` | 28.3% | ⚠️ Needs work |
-| `internal/database` | 21.4% | ⚠️ Needs work |
-| `internal/handlers` | 9.5% | ⚠️ Needs work |
-| `internal/output` | 0.0% | ❌ No tests |
-
-**Total coverage: 30.3%**
-
-**Priority areas for test improvement:**
-1. `internal/output` - Add parser tests for structured blocks
-2. `internal/handlers` - Add HTTP handler tests (DB integration tests needed for higher coverage)
-3. `internal/database` - Add model tests
-
-## Testing Infrastructure
-
-### Test Helpers Package (`internal/testhelpers/`)
-
-The `testhelpers` package provides reusable utilities for testing:
-
-#### HTTP Test Helpers
-
-```go
-import "github.com/akmatori/akmatori/internal/testhelpers"
-
-func TestMyHandler(t *testing.T) {
-    // Fluent API for HTTP testing
-    ctx := testhelpers.NewHTTPTestContext(t, http.MethodPost, "/api/v1/alerts", nil)
-    ctx.
-        WithAPIKey("test-key").
-        WithJSONBody(map[string]string{"name": "test"}).
-        ExecuteFunc(myHandler).
-        AssertStatus(http.StatusOK).
-        AssertBodyContains("success")
-    
-    // Decode response JSON
-    var result MyResponse
-    ctx.DecodeJSON(&result)
-}
-```
-
-#### Mock Alert Adapter
-
-```go
-import "github.com/akmatori/akmatori/internal/testhelpers"
-
-func TestAlertProcessing(t *testing.T) {
-    // Create mock adapter with predefined responses
-    mock := testhelpers.NewMockAlertAdapter("prometheus").
-        WithAlerts(
-            testhelpers.NewAlertBuilder().
-                WithName("HighCPU").
-                WithSeverity("critical").
-                Build(),
-        )
-    
-    // Or configure it to return an error
-    mockWithError := testhelpers.NewMockAlertAdapter("datadog").
-        WithParseError(errors.New("invalid payload"))
-    
-    // Use in tests
-    alerts, err := mock.ParsePayload(payload, instance)
-}
-```
-
-#### Data Builders
-
-```go
-import "github.com/akmatori/akmatori/internal/testhelpers"
-
-// Build test alerts
-alert := testhelpers.NewAlertBuilder().
-    WithName("HighMemory").
-    WithSeverity("warning").
-    WithHost("prod-server-1").
-    WithService("nginx").
-    WithLabel("env", "production").
-    Build()
-
-// Build test incidents
-incident := testhelpers.NewIncidentBuilder().
-    WithID(42).
-    WithUUID("custom-uuid").
-    WithTitle("Database outage").
-    WithStatus("investigating").
-    Build()
-```
-
-#### Assertion Helpers
-
-```go
-import "github.com/akmatori/akmatori/internal/testhelpers"
-
-testhelpers.AssertEqual(t, expected, actual, "values should match")
-testhelpers.AssertNil(t, err, "operation should succeed")
-testhelpers.AssertNotNil(t, result, "result should be returned")
-testhelpers.AssertError(t, err, "invalid input should error")
-testhelpers.AssertContains(t, body, "success", "response body check")
-```
-
-### Benchmark Tests
-
-Critical paths have benchmark tests. Run benchmarks with:
+Useful commands:
 
 ```bash
-# Run all benchmarks
-go test -bench=. ./...
-
-# Run specific package benchmarks with memory stats
-go test -bench=. -benchmem ./internal/alerts/adapters/...
-
-# Run benchmarks matching a pattern
-go test -bench=ParsePayload ./internal/alerts/adapters/...
-```
-
-**Benchmarked areas:**
-- Alert adapter payload parsing (`internal/alerts/adapters/`)
-- JSONB operations (`internal/database/`)
-- Auth middleware validation (`internal/middleware/`)
-- Title generation (`internal/services/`)
-
-### Test Fixture Location
-
-Test fixtures are in `tests/fixtures/`:
-
-```
-tests/fixtures/
-├── alerts/
-│   ├── alertmanager_alert.json
-│   ├── grafana_alert.json
-│   └── zabbix_alert.json
-└── ...
-```
-
-Load fixtures in tests:
-
-```go
-import "github.com/akmatori/akmatori/internal/testhelpers"
-
-func TestAlertParsing(t *testing.T) {
-    // Load raw bytes
-    payload := testhelpers.LoadFixture(t, "alerts/alertmanager_alert.json")
-    
-    // Or load and unmarshal JSON
-    var alert AlertPayload
-    testhelpers.LoadJSONFixture(t, "alerts/alertmanager_alert.json", &alert)
-}
-```
-
-### Testing Patterns
-
-#### Table-Driven Tests
-
-Use table-driven tests for comprehensive coverage:
-
-```go
-func TestSeverityMapping(t *testing.T) {
-    tests := []struct {
-        name     string
-        input    string
-        expected Severity
-    }{
-        {"critical maps correctly", "critical", SeverityCritical},
-        {"warning maps correctly", "warning", SeverityWarning},
-        {"unknown defaults to warning", "unknown", SeverityWarning},
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            result := mapSeverity(tt.input)
-            if result != tt.expected {
-                t.Errorf("mapSeverity(%q) = %v, want %v", tt.input, result, tt.expected)
-            }
-        })
-    }
-}
-```
-
-#### HTTP Handler Tests
-
-Use `httptest` for handler tests:
-
-```go
-func TestAPIHandler(t *testing.T) {
-    handler := NewHandler(deps)
-    
-    req := httptest.NewRequest(http.MethodPost, "/api/v1/resource", body)
-    req.Header.Set("Content-Type", "application/json")
-    rec := httptest.NewRecorder()
-    
-    handler.ServeHTTP(rec, req)
-    
-    if rec.Code != http.StatusOK {
-        t.Errorf("expected 200, got %d", rec.Code)
-    }
-}
-```
-
-#### Mocking External Services
-
-For external API calls, use interfaces and mocks:
-
-```go
-type ZabbixClient interface {
-    GetHosts(ctx context.Context) ([]Host, error)
-}
-
-// In tests:
-type mockZabbixClient struct {
-    hosts []Host
-    err   error
-}
-
-func (m *mockZabbixClient) GetHosts(ctx context.Context) ([]Host, error) {
-    return m.hosts, m.err
-}
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-make test
-
-# Run with coverage
 go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out  # View in browser
-
-# Run specific package
-go test -v ./internal/handlers/...
-
-# Run single test
-go test -v -run TestAlertHandler_HandleWebhook ./internal/handlers/...
-
-# Run with race detection
-go test -race ./...
-```
-
-## Testing Workflow
-
-1. **Before making changes**: Understand what you're modifying
-2. **After making changes**: Run relevant tests immediately
-3. **If tests fail**: Fix the issue before moving on
-4. **Before committing**: Run `make verify` to ensure everything passes
-
-## Code Quality & Linting
-
-### Linting Tools
-
-Run these tools before committing to catch issues early:
-
-```bash
-# Basic Go vet (included in make verify)
+go tool cover -html=coverage.out -o coverage.html
 go vet ./...
-
-# Staticcheck - advanced static analysis
-go install honnef.co/go/tools/cmd/staticcheck@latest
 staticcheck ./...
-
-# golangci-lint - comprehensive linting
-go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-golangci-lint run ./...
+golangci-lint run
 ```
 
-### Common Linting Issues & Fixes
+## Docker / Runtime Checks
 
-#### 1. Unchecked Error Returns (errcheck)
-
-**Problem**: Return values of functions that return errors are not checked.
-
-**Bad:**
-```go
-json.NewEncoder(w).Encode(response)  // Error ignored!
-w.Write([]byte("hello"))             // Error ignored!
-db.AutoMigrate(&Model{})             // Error ignored!
-```
-
-**Good (production code):**
-```go
-if err := json.NewEncoder(w).Encode(response); err != nil {
-    http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-    return
-}
-```
-
-**Good (test code - explicit ignore with comment):**
-```go
-_, _ = w.Write([]byte("hello"))  // ignore: test ResponseRecorder never fails
-_ = db.AutoMigrate(&Model{})     // ignore: test setup
-```
-
-**Good (benchmarks - intentional ignore):**
-```go
-for i := 0; i < b.N; i++ {
-    _, _ = adapter.ParsePayload(payload, instance) // ignore: benchmark only measures performance
-}
-```
-
-#### 2. HTTP Handler Error Responses
-
-In HTTP handlers, always handle `json.Encode` errors since they affect the response:
-
-```go
-w.Header().Set("Content-Type", "application/json")
-if err := json.NewEncoder(w).Encode(data); err != nil {
-    http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
-    return
-}
-```
-
-### When to Use Explicit Ignore (`_ = ...`)
-
-Use explicit ignore only when:
-1. **Test code**: ResponseRecorder.Write() can't fail in tests
-2. **Benchmarks**: Only measuring performance, not correctness
-3. **Error response handlers**: After WriteHeader, can't change status
-
-Always add a comment explaining why the error is ignored.
-
-## CRITICAL: Rebuild Docker Containers After Changes
-
-**After making code changes, you MUST rebuild and restart the affected Docker containers.**
-
-### Container Rebuild Commands by Area
-
-| After changing... | Rebuild command |
-|-------------------|-----------------|
-| API server (`cmd/akmatori/`, `internal/`) | `docker-compose build akmatori-api && docker-compose up -d akmatori-api` |
-| MCP Gateway (`mcp-gateway/`) | `docker-compose build mcp-gateway && docker-compose up -d mcp-gateway` |
-| Frontend (`web/`) | `docker-compose build frontend && docker-compose up -d frontend` |
-| Codex worker (`Dockerfile.codex`, skills) | `docker-compose build akmatori-codex && docker-compose up -d akmatori-codex` |
-| Multiple components | `docker-compose build <service1> <service2> && docker-compose up -d <service1> <service2>` |
-
-### Quick Reference
+If a change affects running services, rebuild only what changed instead of everything.
 
 ```bash
-# Rebuild and restart specific services
-docker-compose build mcp-gateway frontend
-docker-compose up -d mcp-gateway frontend
-
-# Rebuild all services (slower, use when needed)
-docker-compose build
-docker-compose up -d
-
-# View logs after restart to verify
-docker-compose logs -f mcp-gateway
-docker-compose logs -f frontend
-
-# Check container health
-docker-compose ps
+docker-compose build akmatori-api && docker-compose up -d akmatori-api
+docker-compose build mcp-gateway && docker-compose up -d mcp-gateway
+docker-compose build frontend && docker-compose up -d frontend
 ```
 
-### Container-to-Code Mapping
-
-| Container | Source Code |
-|-----------|-------------|
-| `akmatori-api` | `cmd/akmatori/`, `internal/`, `Dockerfile.api` |
-| `mcp-gateway` | `mcp-gateway/`, `mcp-gateway/Dockerfile` |
-| `frontend` | `web/`, `web/Dockerfile` |
-| `akmatori-codex` | `Dockerfile.codex`, `.codex/skills/` |
-| `postgres` | N/A (uses official image) |
-| `proxy` | `proxy/nginx.conf` (config only, no rebuild needed) |
-
-## CRITICAL: Write Tests for New Code
-
-**When adding ANY new functionality, you MUST write corresponding tests.**
-
-### Test Requirements for New Code
-
-| When you create... | You must also create... |
-|--------------------|-------------------------|
-| New adapter in `internal/alerts/adapters/` | `<adapter>_test.go` with payload parsing tests |
-| New tool in `mcp-gateway/internal/tools/` | `<tool>_test.go` with unit tests |
-| New handler in `internal/handlers/` | Handler tests using `httptest` |
-| New service in `internal/services/` | Service tests with mocked dependencies |
-| New utility function | Unit tests covering edge cases |
-| New API endpoint | Integration test for request/response |
-
-### Test Coverage Checklist
-
-For each new function/feature, tests should cover:
-
-- [ ] **Happy path**: Normal expected behavior
-- [ ] **Edge cases**: Empty inputs, nil values, boundary conditions
-- [ ] **Error cases**: Invalid input, malformed data, missing fields
-- [ ] **JSON serialization**: If structs are serialized, test round-trip
-
-### Example: Adding a New Alert Adapter
-
-When adding a new adapter (e.g., `newrelic.go`), create `newrelic_test.go` with:
-
-```go
-func TestNewNewRelicAdapter(t *testing.T) { ... }
-func TestNewRelicAdapter_ParsePayload_FiringAlert(t *testing.T) { ... }
-func TestNewRelicAdapter_ParsePayload_ResolvedAlert(t *testing.T) { ... }
-func TestNewRelicAdapter_ParsePayload_InvalidJSON(t *testing.T) { ... }
-func TestNewRelicAdapter_ValidateWebhookSecret_NoSecret(t *testing.T) { ... }
-func TestNewRelicAdapter_ValidateWebhookSecret_ValidSecret(t *testing.T) { ... }
-func TestNewRelicAdapter_ValidateWebhookSecret_InvalidSecret(t *testing.T) { ... }
-func TestNewRelicAdapter_GetDefaultMappings(t *testing.T) { ... }
-```
-
-Also add a test fixture: `tests/fixtures/alerts/newrelic_alert.json`
-
-### Test File Location
-
-Place test files next to the code they test:
-```
-internal/alerts/adapters/
-├── alertmanager.go
-├── alertmanager_test.go    # <- Tests go here
-├── zabbix.go
-├── zabbix_test.go
-```
-
-### Verify New Tests Work
-
-After writing new tests:
-```bash
-# Run just your new tests
-go test -v -run TestNewRelicAdapter ./internal/alerts/adapters/...
-
-# Run all tests to ensure no regressions
-make test-all
-```
-
-## Code Cleanup
-
-Use the **code simplifier agent** at the end of a long coding session, or to clean up complex PRs. This helps reduce unnecessary complexity and ensures code remains maintainable.
-
-## Code Quality & Linting
-
-**Run linting tools regularly to catch issues early.**
-
-### Linting Commands
-
-```bash
-# Basic vet check (fast)
-go vet ./...
-
-# Staticcheck for deeper analysis (recommended)
-staticcheck ./...
-
-# golangci-lint for comprehensive linting (requires Go version matching project)
-golangci-lint run --timeout 5m
-```
-
-### Common Staticcheck Fixes
-
-| Issue | Fix |
-|-------|-----|
-| S1031: unnecessary nil check around range | Remove `if x != nil` - ranging over nil map/slice is safe |
-| U1000: unused function | Remove function or add `//nolint:unused` if kept for future use |
-| SA5011: possible nil pointer dereference | Use `t.Fatal()` instead of `t.Error()` before dereferencing |
-| SA4006: value is never used | Remove assignment or use blank identifier `_` |
-| SA1019: deprecated function | Replace with recommended alternative (e.g., `strings.Title` → `cases.Title`) |
-
-### Go Idioms to Follow
-
-```go
-// Nil check around range is unnecessary - ranging over nil is safe
-// BAD:
-if myMap != nil {
-    for k, v := range myMap { ... }
-}
-// GOOD:
-for k, v := range myMap { ... }
-
-// Use t.Fatal for nil checks in tests to prevent nil pointer dereference
-// BAD:
-if svc == nil {
-    t.Error("service is nil")  // continues, then crashes on next line
-}
-// GOOD:
-if svc == nil {
-    t.Fatal("service is nil")  // stops test immediately
-}
-
-// Remove unused code rather than leaving it commented
-// If keeping for future use, add clear NOTE comment explaining why
-```
-
-### Error Handling Patterns
-
-**Always check return values from functions that can fail.** Golangci-lint's `errcheck` will flag unchecked errors.
-
-#### HTTP Response Writing
-
-```go
-// BAD: w.Write error not checked
-w.Write([]byte(`{"error":"message"}`))
-
-// GOOD: Log if write fails (client disconnected, etc.)
-if _, err := w.Write([]byte(`{"error":"message"}`)); err != nil {
-    log.Printf("Failed to write error response: %v", err)
-}
-
-// For json.Encode:
-if err := json.NewEncoder(w).Encode(response); err != nil {
-    log.Printf("Failed to encode response: %v", err)
-}
-```
-
-#### Slack API Calls (Fire-and-Forget)
-
-```go
-// BAD: Reaction/message errors not handled
-slackClient.AddReaction("white_check_mark", itemRef)
-slackClient.PostMessage(channelID, options...)
-
-// GOOD: Log failures but don't abort on non-critical operations
-if err := slackClient.AddReaction("white_check_mark", itemRef); err != nil {
-    log.Printf("Failed to add reaction: %v", err)
-}
-if _, _, err := slackClient.PostMessage(channelID, options...); err != nil {
-    log.Printf("Failed to post message: %v", err)
-}
-```
-
-#### Database/Service Updates in Callbacks
-
-```go
-// BAD: UpdateIncidentLog error ignored
-callback := IncidentCallback{
-    OnOutput: func(output string) {
-        skillService.UpdateIncidentLog(uuid, output)
-    },
-}
-
-// GOOD: Log errors in callbacks
-callback := IncidentCallback{
-    OnOutput: func(output string) {
-        if err := skillService.UpdateIncidentLog(uuid, output); err != nil {
-            log.Printf("Failed to update incident log: %v", err)
-        }
-    },
-}
-```
-
-#### Filesystem Operations
-
-```go
-// BAD: MkdirAll error ignored
-os.MkdirAll(scriptsDir, 0755)
-
-// GOOD: Log non-critical filesystem errors
-if err := os.MkdirAll(scriptsDir, 0755); err != nil {
-    log.Printf("Failed to create scripts directory %s: %v", scriptsDir, err)
-}
-```
-
-#### Tests: Always Check Decode/Unmarshal Errors
-
-```go
-// BAD: Decode errors not checked in tests
-json.NewDecoder(w.Body).Decode(&response)
-
-// GOOD: Fail test if decode fails
-if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-    t.Fatalf("Failed to decode response: %v", err)
-}
-```
-
-#### Map Nil Checks in Conditions
-
-```go
-// BAD: Unnecessary nil check (len() on nil map returns 0)
-if decoded.TargetLabels != nil && len(decoded.TargetLabels) > 0 {
-    // ...
-}
-
-// GOOD: Just check length
-if len(decoded.TargetLabels) > 0 {
-    // ...
-}
-```
-
-### Pre-Commit Quality Checklist
-
-Before committing, verify:
-- [ ] `go vet ./...` passes with no output
-- [ ] `staticcheck ./...` passes with no output
-- [ ] `go test ./...` passes
-- [ ] No unused imports (goimports or IDE will catch these)
-
-## CRITICAL: External API Integration - Rate Limiting & Caching
-
-**Akmatori integrates with enterprise monitoring systems (Zabbix, Datadog, PagerDuty, etc.). Flooding these systems with requests will destroy customer trust and can cause outages.**
-
-### Mandatory Requirements for External API Calls
-
-When adding or modifying code that calls external APIs (Zabbix, monitoring systems, customer infrastructure):
-
-1. **Always implement rate limiting**
-   - Use token bucket or similar algorithm
-   - Default: 10 requests/second with burst of 20
-   - Make limits configurable per integration
-
-2. **Always implement caching for read operations**
-   - Cache credentials/config: 5 minute TTL
-   - Cache API responses: 15-60 second TTL (shorter for frequently changing data)
-   - Cache auth tokens: 30 minute TTL
-   - Use cache keys that include all relevant parameters
-
-3. **Batch requests when possible**
-   - Combine multiple similar queries into single API calls
-   - Deduplicate repeated requests within an investigation
-   - Example: `get_items_batch()` instead of multiple `get_items()` calls
-
-4. **Log cache hits/misses for observability**
-   - Helps identify if caching is working
-   - Enables tuning of TTL values
-
-### Current Implementation Reference
-
-See `mcp-gateway/internal/` for examples:
-- `cache/cache.go` - Generic TTL cache with background cleanup
-- `ratelimit/limiter.go` - Token bucket rate limiter
-- `tools/zabbix/zabbix.go` - Integration with caching and rate limiting
-
-### Rate Limit Configuration
-
-| External System | Rate Limit | Burst | Notes |
-|-----------------|------------|-------|-------|
-| Zabbix API | 10/sec | 20 | Configured in `registry.go` |
-| SSH commands | 5/sec | 10 | Per-server limit |
-| Future APIs | 10/sec | 20 | Default, adjust as needed |
-
-### Cache TTL Guidelines
-
-| Data Type | TTL | Rationale |
-|-----------|-----|-----------|
-| Credentials/Config | 5 min | Rarely changes, reduces DB load |
-| Auth tokens | 30 min | Session tokens are long-lived |
-| Host/inventory data | 30-60 sec | Changes infrequently |
-| Problems/alerts | 15 sec | Changes frequently, needs freshness |
-| Metrics/history | 30 sec | Point-in-time data, cacheable |
-
-### Before Adding New External Integrations
-
-Ask yourself:
-- [ ] Does this code have rate limiting?
-- [ ] Are read operations cached?
-- [ ] Can multiple requests be batched?
-- [ ] What happens if this runs in a loop or gets called 100x?
-- [ ] Would I be comfortable if a customer saw these API logs?
-
-### What NOT To Do
-
-```go
-// BAD: Unbounded API calls in a loop
-for _, host := range hosts {
-    items, _ := zabbix.GetItems(ctx, host.ID)  // N API calls!
-    history, _ := zabbix.GetHistory(ctx, items) // N more API calls!
-}
-
-// GOOD: Batched with caching
-items, _ := zabbix.GetItemsBatch(ctx, hostIDs, patterns) // 1 cached call
-```
-
-## Do NOT
-
-- Skip running tests after changes
-- Commit code without verifying tests pass
-- Add new functionality without writing tests first or immediately after
-- Modify test fixtures without updating related tests
-- Write tests that depend on external services (use mocks instead)
-- **Call external APIs without rate limiting** - This can flood customer systems
-- **Make unbounded API calls in loops** - Always batch or cache
-- **Skip caching for read-only external API calls** - Reduces load on customer systems
-- **Assume external systems can handle unlimited requests** - They can't, and we'll lose trust
+Use full rebuilds only when necessary.
+
+## Before Committing
+
+1. Run the most relevant package tests
+2. Run `go test ./...`
+3. If `mcp-gateway/` changed, test it too
+4. For doc changes to this file, verify size stays under 30000 bytes:
+   ```bash
+   wc -c CLAUDE.md
+   ```
+5. Keep commit scope narrow and message clear
+
+## Do Not Bloat This File
+
+This file is a compact operator guide, not a full handbook. Prefer linking intent to code locations over embedding long examples. If adding new guidance:
+
+- keep it short
+- remove outdated text nearby
+- avoid duplicate sections
+- prefer bullets over large tables
