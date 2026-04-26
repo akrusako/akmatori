@@ -15,7 +15,8 @@ GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 
 # Default number of parallel test jobs
-TEST_PARALLEL=4
+# Increased from 4 to match my machine's core count
+TEST_PARALLEL=8
 
 help: ## Display this help screen
 	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -103,8 +104,3 @@ docker-up: ## Start all containers with docker-compose (includes directory init)
 
 docker-down: ## Stop all containers
 	docker-compose down
-
-docker-logs: ## Show logs from all containers
-	docker-compose logs -f
-
-docker-restart: ## Restart all contain
