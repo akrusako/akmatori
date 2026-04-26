@@ -47,6 +47,12 @@ Akmatori is an AI-powered AIOps platform that receives alerts from monitoring sy
 └── tests/fixtures/         # Test payloads and mock data
 ```
 
+## Personal Notes (fork)
+
+- I'm primarily using this with Alertmanager + VictoriaMetrics; Zabbix-specific paths are less relevant for my setup.
+- My preferred LLM provider is Anthropic (claude-sonnet). OpenRouter is a useful fallback for cost control.
+- TODO: explore the `qmd/` runbook search integration more — haven't wired it up locally yet.
+
 ## CRITICAL: Always Verify Changes with Tests
 
 **After ANY code change, run the appropriate test command:**
@@ -55,9 +61,3 @@ Akmatori is an AI-powered AIOps platform that receives alerts from monitoring sy
 |-------------------|-------------|
 | Alert adapters (`internal/alerts/adapters/`) | `make test-adapters` |
 | MCP Gateway (`mcp-gateway/`) | `make t
-
-## Personal Notes (Fork)
-
-- I'm primarily using this with Anthropic (Claude) as the LLM provider — OpenRouter is a good fallback for cost reasons
-- For local dev, the QMD container can be skipped if you don't need runbook search; saves memory
-- TODO: explore adding a Prometheus adapter alongside the existing Alertmanager one
