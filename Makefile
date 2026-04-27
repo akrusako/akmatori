@@ -18,6 +18,9 @@ GOMOD=$(GOCMD) mod
 # Increased from 4 to match my machine's core count
 TEST_PARALLEL=8
 
+# Default timeout for tests (increased from default 30s for slower integration tests)
+TEST_TIMEOUT=120s
+
 help: ## Display this help screen
 	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
@@ -44,10 +47,10 @@ run: ## Run the application
 	$(GOBUILD) -o $(BINARY_NAME) -v ./cmd/akmatori && ./$(BINARY_NAME)
 
 test: ## Run all Go tests
-	$(GOTEST) -v -parallel $(TEST_PARALLEL) ./...
+	$(GOTEST) -v -timeout $(TEST_TIMEOUT) -parallel $(TEST_PARALLEL) ./...
 
 test-all: ## Run all tests including MCP gateway and agent-worker
-	$(GOTEST) -v -parallel $(TEST_PARALLEL) ./...
+	$(GOTEST) -v -timeout $(TEST_TIMEOUT) -parallel $(TEST_PARALLEL) ./...
 	cd mcp-gateway && $(GOTEST) -v ./...
 	cd agent-worker && npm test
 
@@ -64,7 +67,7 @@ build-agent: ## Build agent-worker Docker image
 	docker build -t akmatori-agent ./agent-worker
 
 test-coverage: ## Run tests with coverage
-	$(GOTEST) -v -coverprofile=coverage.out ./...
+	$(GOTEST) -v -timeout $(TEST_TIMEOUT) -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
@@ -102,5 +105,4 @@ docker-run: ## Run Docker container
 docker-up: ## Start all containers with docker-compose (includes directory init)
 	docker-compose up -d
 
-docker-down: ## Stop all containers
-	docker-compose down
+docke
