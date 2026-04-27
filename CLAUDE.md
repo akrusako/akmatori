@@ -51,13 +51,6 @@ Akmatori is an AI-powered AIOps platform that receives alerts from monitoring sy
 
 - I'm primarily using this with Alertmanager + VictoriaMetrics; Zabbix-specific paths are less relevant for my setup.
 - My preferred LLM provider is Anthropic (claude-sonnet). OpenRouter is a useful fallback for cost control.
-- TODO: explore the `qmd/` runbook search integration more — haven't wired it up locally yet.
-
-## CRITICAL: Always Verify Changes with Tests
-
-**After ANY code change, run the appropriate test command:**
-
-| After changing... | Run command |
-|-------------------|-------------|
-| Alert adapters (`internal/alerts/adapters/`) | `make test-adapters` |
-| MCP Gateway (`mcp-gateway/`) | `make t
+- TODO: explore the `qmd/` runbook search — specifically whether it can index our internal Confluence runbooks via the HTTP connector.
+- When testing alert ingestion locally, use the payloads in `tests/fixtures/` — the Alertmanager ones are the most relevant for my setup.
+- Default pagination in `internal/api/` is 20 items; I find 50 more useful for the incidents list — worth patching locally.
