@@ -15,8 +15,8 @@ GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 
 # Default number of parallel test jobs
-# Increased from 4 to match my machine's core count
-TEST_PARALLEL=8
+# My machine has 12 cores, so bumping this up
+TEST_PARALLEL=12
 
 # Default timeout for tests (increased from default 30s for slower integration tests)
 TEST_TIMEOUT=120s
@@ -99,10 +99,4 @@ lint: ## Run golangci-lint (requires golangci-lint installed)
 docker-build: ## Build Docker image
 	docker build -t akmatori:latest .
 
-docker-run: ## Run Docker container
-	docker run --env-file .env akmatori:latest
-
-docker-up: ## Start all containers with docker-compose (includes directory init)
-	docker-compose up -d
-
-docke
+docker-run
