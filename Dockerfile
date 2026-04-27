@@ -48,8 +48,10 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 # Install Python packages required by skills and tools
 # Tool-specific dependencies:
 #   - paramiko: SSH tool (remote command execution)
+#   - httpx: modern async HTTP client (personal preference over requests)
 RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
+    httpx \
     pyyaml \
     python-dotenv \
     PyPDF2 \
