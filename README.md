@@ -70,6 +70,8 @@ Akmatori is an AI-powered AIOps agent that integrates with monitoring systems an
 
 6. Configure your LLM provider in **Settings → LLM Provider**
 
+> **Personal note:** I've been using Gemini 2.5 Flash as my default provider — it's fast, cheap, and handles most incident analysis well. Claude Sonnet 4.6 is worth it for complex runbooks.
+
 ## Architecture
 
 Akmatori uses a secure 4-container architecture:
@@ -80,56 +82,5 @@ Akmatori uses a secure 4-container architecture:
 │  (Prometheus,   │     │  (Go backend)   │     │   (encrypted    │
 │   PagerDuty,    │     │                 │     │   credentials)  │
 │   Datadog...)   │     └────────┬────────┘     └─────────────────┘
-└─────────────────┘              │
-                                 │ WebSocket
-┌─────────────────┐              ▼
-│  Slack Bot      │◀───▶┌─────────────────┐     ┌─────────────────┐
-│                 │     │  Agent Worker   │◀───▶│   MCP Gateway   │
-└─────────────────┘     │  (pi-mono)      │     │  (SSH, APIs)    │
-                        └────────┬────────┘     └─────────────────┘
-                                 │
-                                 ▼
-                        ┌─────────────────┐
-                        │  LLM Providers  │
-                        │  (OpenAI,       │
-                        │   Anthropic,    │
-                        │   Google, etc.) │
-                        └─────────────────┘
+
 ```
-
-**Security by design:**
-- Agent Worker has NO database access
-- Credentials are fetched via MCP Gateway on-demand
-- Network isolation between containers
-- API keys passed per-incident via WebSocket
-
-## Documentation
-
-- [Getting Started](https://akmatori.com/docs/getting-started)
-- [Architecture](https://akmatori.com/docs/architecture)
-- [Alert Integrations](https://akmatori.com/docs/integrations)
-- [API Reference](https://akmatori.com/docs/api)
-- [Skills Guide](https://akmatori.com/docs/skills)
-
-### API Documentation (Self-Hosted)
-
-The API server includes built-in interactive documentation:
-
-- **Swagger UI**: `http://localhost:8080/api/docs` — browse and test API endpoints in your browser
-- **OpenAPI Spec**: `http://localhost:8080/api/openapi.yaml` — raw OpenAPI 3.1 specification
-
-Both endpoints are publicly accessible (no authentication required).
-
-## License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Community
-
-- [Website](https://akmatori.com)
-- [Documentation](https://akmatori.com/docs)
-- [GitHub Issues](https://github.com/akmatori/akmatori/issues)
