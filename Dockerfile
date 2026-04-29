@@ -49,13 +49,15 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 # Tool-specific dependencies:
 #   - paramiko: SSH tool (remote command execution)
 #   - httpx: modern async HTTP client (personal preference over requests)
+#   - rich: pretty terminal output, useful for local debugging
 RUN pip3 install --no-cache-dir --break-system-packages \
     requests \
     httpx \
     pyyaml \
     python-dotenv \
     PyPDF2 \
-    paramiko>=3.3.0
+    paramiko>=3.3.0 \
+    rich
 
 # Create non-root user first
 RUN groupadd -g 1000 akmatori && \
