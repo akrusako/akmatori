@@ -72,6 +72,8 @@ Akmatori is an AI-powered AIOps agent that integrates with monitoring systems an
 
 > **Personal note:** I've been using Gemini 2.5 Flash as my default provider — it's fast, cheap, and handles most incident analysis well. Claude Sonnet 4.6 is worth it for complex runbooks.
 
+> **My setup note:** Running this alongside a homelab Prometheus stack. I mapped the dashboard to port 9090 instead of 8080 to avoid conflicts — just change `ports: - "9090:8080"` for the frontend service in `docker-compose.yml`.
+
 ## Architecture
 
 Akmatori uses a secure 4-container architecture:
@@ -79,8 +81,5 @@ Akmatori uses a secure 4-container architecture:
 ```
 ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │  Alert Sources  │────▶│    API Server   │◀───▶│   PostgreSQL    │
-│  (Prometheus,   │     │  (Go backend)   │     │   (encrypted    │
-│   PagerDuty,    │     │                 │     │   credentials)  │
-│   Datadog...)   │     └────────┬────────┘     └─────────────────┘
-
+│  (Prometheu
 ```
